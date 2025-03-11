@@ -1,88 +1,12 @@
-import { createStore } from 'zustand/vanilla';
-import { toFile } from 'qrcode';
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
+import { store } from './store.ts';
 
 dotenv.config();
 
 if (process.env.TELEGRAM_TOKEN == undefined) {
   throw new Error("TELEGRAM_TOKEN is not defined in the environment variables.");
 }
-
-type BotState =
-  | { type: "WaitingForCommand" }
-  | { type: "ProcessingInput" }
-  | { type: "Responding"; message: string }
-  | { type: "Error"; error: string };
-
-interface State {
-  chatId: number;
-  userId: number;
-  messageHistory: string[];
-  currentState: BotState;
-}
-
-const initialState: State = {
-  chatId: 0,
-  userId: 0,
-  messageHistory: [],
-  currentState: { type: "WaitingForCommand" },
-  message: '',
-};
-
-interface Action {
-  handleIncomingQrRequest:
-  (payload: { chatId: number; userId: number; text: string }) => void;
-  generateQRCode: (text: string, format: string) => Promise<void>;
-}
-
-const store = createStore<State & Action>((set) => ({
-  ...initialState,
-  handleIncomingQrRequest: ({ chatId, userId, text }) => {
-    set((state) => ({
-      chatId,
-      userId,
-      messageHistory: [...state.messageHistory, text],
-      currentState: { type: 'ProcessingInput' },
-    }));
-
-    store.getState().generateQRCode(text, 'png').then(() => {
-      console.log(`printed: ${text}`);
-    });
-  },
-  generateQRCode: (text, format) => {
-    const sanitizedFileName = text.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-    const outputFileName = `${sanitizedFileName}_qr.${format}`;
-
-    return new Promise<void>((resolve, reject) => {
-      const success = toFile(outputFileName, text, {
-        type: format,
-        errorCorrectionLevel: 'H'
-      }, (err) => {
-        if (err) {
-          throw err
-          return false;
-        }
-        else {
-          console.log(`QR code saved as ${outputFileName}`);
-          return true;
-        }
-      });
-
-      // const success = true; // Simulate success
-      if (success) {
-        set({ message: `File saved successfully! (${outputFileName})` });
-        resolve();
-      } else {
-        reject(new Error('Failed to save file.'));
-      }
-    }).catch((error) => {
-      set({ message: `An error occurred while generating the QR code: ${error}` });
-    });
-  },
-}));
-
-// To stop listening to changes, call unsubscribe()
 
 // Example usage outside of React
 // store.getState().generateQRCode('ciao', 'png').then(() => {
@@ -95,8 +19,9 @@ const bot = new TelegramBot(
 );
 
 bot.onText(/\/start/, (msg) => {
-    const chatId = msg.chat.id;
-    bot.sendMessage(chatId, 'Hello, give me a string after `/qr` and I`ll turn it into a QR code for you!');
+  const chatId = msg.chat.id;
+  const text = 'Hello, give me a string after `/qr` and I`ll turn it into a QR code for you!';
+  store.getState().sendMessage(chatId, text);
 });
 
 bot.onText(/\/qr (.+)/, (msg, match) => {
@@ -113,3 +38,92 @@ bot.onText(/\/qr (.+)/, (msg, match) => {
     bot.sendMessage(chatId, `You sent: ${text}`);
   })
 });
+
+bot.onText(/\load/, (msg) => {
+  Promise.resolve()
+    .then(() =>
+      store.getState().startProcessingInput(msg.chat.id))
+    .then(() =>
+      store.getState().emulateLongProcess())
+    .then(() =>
+      store.getState().endProcessingInput(msg.chat.id, "Long process ended.", store.getState().currentState.msgId))
+    .catch((error) => {
+      console.error("An error occurred:", error);
+    });
+});
+
+const animateLoading = (chatId: number, messageId: number) => {
+  const phases = ['.', '..', '...'];
+
+  const runSteps = () => {
+    const steps = phases.reduce((promiseChain, phase) => {
+      return promiseChain
+        .then(() => {
+          if (store.getState().currentState.type == "ProcessingInput") {
+            bot.editMessageText(
+              phase, {
+                chat_id: chatId,
+                message_id: messageId
+              })
+          }
+        })
+        .then(() => new Promise(resolve => setTimeout(resolve, 1000)))
+    }, Promise.resolve());
+
+    steps.then(() => {
+      // condition could be wrapped in a lambda, maybe
+      if (store.getState().currentState.type == "ProcessingInput") {
+        runSteps();
+      }
+    });
+  };
+  runSteps();
+};
+
+const unsubscribe = store.subscribe(
+  (state) => {
+    switch (state.currentState.type) {
+      case "Responding": {
+        const newText = state.currentState.message;
+        bot.sendMessage(state.chatId, newText);
+        state.waitForCommand();
+        break;
+      };
+      case "StartProcessingInput": {
+        bot.sendMessage(state.chatId, '...')
+          .then((sentMessage) => {
+            state.processingInput(state.chatId, sentMessage.message_id);
+          });
+      };
+      case "ProcessingInput": {
+        const loadingMsgId = state.currentState.msgId;
+        if (loadingMsgId) {
+          animateLoading(state.chatId, loadingMsgId);
+        }
+      };
+      case "EndProcessingInput": {
+        const newText = state.currentState.message;
+        if (newText) {
+          bot.editMessageText(
+            newText, {
+              chat_id: state.chatId,
+              message_id: state.currentState.msgId,
+            });
+        }
+      }
+      default:
+        break;
+    }
+  }
+);
+
+process.on('SIGINT', () => {
+  unsubscribe();
+  process.exit();
+});
+
+bot.on('polling_error', (error) => {
+  console.error('Polling error:', error);
+  unsubscribe();
+});
+
