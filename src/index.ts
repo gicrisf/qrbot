@@ -8,11 +8,6 @@ if (process.env.TELEGRAM_TOKEN == undefined) {
   throw new Error("TELEGRAM_TOKEN is not defined in the environment variables.");
 }
 
-// Example usage outside of React
-// store.getState().generateQRCode('ciao', 'png').then(() => {
-//   console.log(store.getState().message); // Output: "File saved successfully! (exampletext_qr.png)"
-// });
-
 const bot = new TelegramBot(
     process.env.TELEGRAM_TOKEN,
     { polling: true }
@@ -25,18 +20,11 @@ bot.onText(/\/start/, (msg) => {
 });
 
 bot.onText(/\/qr (.+)/, (msg, match) => {
-  // Text after '/qr'
   const chatId = msg.chat.id;
   const userId = msg.from.id;
+  // Text after '/qr'
   const text = match[1];
-  // this gives polling error
-  new Promise((resolve) => {
-    resolve(store.getState()
-      .handleIncomingQrRequest({ chatId, userId, text }));
-  }).then(() => {
-    // I would associate this to a subscription
-    bot.sendMessage(chatId, `You sent: ${text}`);
-  })
+  store.getState().handleIncomingQrRequest({ chatId, userId, text }); 
 });
 
 bot.onText(/\load/, (msg) => {
@@ -44,7 +32,7 @@ bot.onText(/\load/, (msg) => {
     .then(() =>
       store.getState().startProcessingInput(msg.chat.id))
     .then(() =>
-      store.getState().emulateLongProcess())
+      new Promise(res => setTimeout(res, 10000)))
     .then(() =>
       store.getState().endProcessingInput(msg.chat.id, "Long process ended.", store.getState().currentState.msgId))
     .catch((error) => {
@@ -110,7 +98,7 @@ const unsubscribe = store.subscribe(
               message_id: state.currentState.msgId,
             });
         }
-      }
+      };
       default:
         break;
     }

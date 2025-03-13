@@ -27,7 +27,6 @@ interface Action {
     handleIncomingQrRequest:
     (payload: { chatId: number; userId: number; text: string }) => void;
     generateQRCode: (text: string, format: string) => Promise<void>;
-    emulateLongProcess: () => Promise<void>;
 }
 
 export const store = createStore<State & Action>((set, get) => ({
@@ -37,89 +36,78 @@ export const store = createStore<State & Action>((set, get) => ({
         if (currentState.type == "ProcessingInput") {
             get().endProcessingInput(chatId, text, currentState.msgId);
         } else {
-            set((state) => ({
+            set({
                 chatId,
-                currentState: { type: 'Responding', message: text },
-            }))
+                currentState: { type: 'Responding', message: text }
+            })
         }
     },
     waitForCommand: (chatId) => {
-        set((state) => ({
+        set({
             chatId,
-            currentState: { type: 'WaitingForCommand' },
-        }))
+            currentState: { type: 'WaitingForCommand' }
+        });
     },
     startProcessingInput: (chatId) => {
-        set((state) => ({
+        set({
             chatId,
-            currentState: { type: 'StartProcessingInput' },
-        }))
+            currentState: { type: 'StartProcessingInput' }
+        });
     },
     processingInput: (chatId, loadingMsgId) => {
-        set((state) => ({
+        set({
             chatId,
-            currentState: { type: 'ProcessingInput', msgId: loadingMsgId },
-        }))
+            currentState: { type: 'ProcessingInput', msgId: loadingMsgId }
+        });
     },
     endProcessingInput: (chatId, text, loadingMsgId) => {
-        set((state) => ({
+        set({
             chatId,
-            currentState: {
-                type: 'EndProcessingInput',
-                message: text,
-                msgId: loadingMsgId,
-            }
-        }))
-    },
-    handleIncomingQrRequest: ({ chatId, userId, text }) => {
-        set((state) => ({
-            chatId,
-            userId,
-            messageHistory: [...state.messageHistory, text],
-            // TODO update to new state
-            currentState: { type: 'ProcessingInput' },
-        }));
-
-        store.getState().generateQRCode(text, 'png').then(() => {
-            console.log(`printed: ${text}`);
+            currentState: { type: 'EndProcessingInput', message: text, msgId: loadingMsgId }
         });
+    },
+    // TODO userId not useful, I guess?
+    handleIncomingQrRequest: ({ chatId, userId, text }) => {
+        Promise.resolve()
+            .then(() =>
+                get().startProcessingInput(chatId))
+            .then(() => {
+                get().generateQRCode(text, 'png')
+            })
+            .catch((error) => {
+                const errText = `An error occurred while generating the QR code: ${error}`;
+                get().endProcessingInput(chatId, errText, get().currentState.msgId)
+            });
     },
     generateQRCode: (text, format) => {
         const sanitizedFileName = text.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
         const outputFileName = `${sanitizedFileName}_qr.${format}`;
 
         return new Promise<void>((resolve, reject) => {
-            const success = toFile(outputFileName, text, {
+            toFile(outputFileName, text, {
                 type: format,
                 errorCorrectionLevel: 'H'
             }, (err) => {
                 if (err) {
-                    if (err) throw err;
+                    reject(err);
+                    return;
                 }
-                else {
-                    const text = `QR code saved as ${outputFileName}`;
-                    // TODO Use the action! setNewMessage
-                    set((state) => ({
-                        chatId: state.chatId,
-                        currentState: { type: 'Responding', message: text },
-                    }))
-                }
-            });
-        }).catch((error) => {
-            const text = `An error occurred while generating the QR code: ${error}`;
-            // TODO Use the action!
-            set((state) => ({
-                chatId: state.chatId,
-                currentState: { type: 'Responding', message: text },
-            }));
-        });
-    },
-    emulateLongProcess: () => {
-        // emulate a 10 seconds job
-        return new Promise((resolve) => {
-            setTimeout(() => {
                 resolve();
-            }, 10000)
+            });
+        })
+        .then(() => {
+            const succTest = `QR code saved as ${outputFileName}`;
+            const checkForLoadingMsg = () => {
+                return new Promise(res => setTimeout(res, 1000))
+                    .then(() => {
+                        if (get().currentState.type == "ProcessingInput") {
+                            get().endProcessingInput(get().chatId, succTest, get().currentState.msgId)
+                        } else {
+                            checkForLoadingMsg()
+                        }
+                    })
+            }
+            checkForLoadingMsg();
         });
-    },
+    }
 }));
