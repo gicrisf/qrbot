@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import { toFile } from 'qrcode';
+import QRCode from 'qrcode';
 
 type BotState =
     | { type: "WaitingForCommand" }
@@ -83,17 +83,9 @@ export const store = createStore<State & Action>((set, get) => ({
         const sanitizedFileName = text.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
         const outputFileName = `${sanitizedFileName}_qr.${format}`;
 
-        return new Promise<void>((resolve, reject) => {
-            toFile(outputFileName, text, {
-                type: format,
-                errorCorrectionLevel: 'H'
-            }, (err) => {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                resolve();
-            });
+        return QRCode.toFile(outputFileName, text, {
+            type: format,
+            errorCorrectionLevel: 'H'
         })
         .then(() => {
             const succTest = `QR code saved as ${outputFileName}`;

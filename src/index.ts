@@ -97,7 +97,7 @@ const unsubscribe = store.subscribe(
               chat_id: state.chatId,
               message_id: state.currentState.msgId,
             });
-        }
+        };
       };
       default:
         break;
