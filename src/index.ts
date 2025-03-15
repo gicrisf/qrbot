@@ -16,7 +16,7 @@ const bot = new TelegramBot(
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   const text = 'Hello, give me a string after `/qr` and I`ll turn it into a QR code for you!';
-  store.getState().sendMessage(chatId, text);
+  bot.sendMessage(chatId, `You said: ${text}`);
 });
 
 bot.onText(/\/qr (.+)/, (msg, match) => {
@@ -24,20 +24,9 @@ bot.onText(/\/qr (.+)/, (msg, match) => {
   const userId = msg.from.id;
   // Text after '/qr'
   const text = match[1];
-  store.getState().handleIncomingQrRequest({ chatId, userId, text }); 
-});
+  // store.getState().handleIncomingQrRequest({ chatId, userId, text });
 
-bot.onText(/\load/, (msg) => {
-  Promise.resolve()
-    .then(() =>
-      store.getState().startProcessingInput(msg.chat.id))
-    .then(() =>
-      new Promise(res => setTimeout(res, 10000)))
-    .then(() =>
-      store.getState().endProcessingInput(msg.chat.id, "Long process ended.", store.getState().currentState.msgId))
-    .catch((error) => {
-      console.error("An error occurred:", error);
-    });
+  store.getState().handleIncomingQrRequest({ id: msg.message_id, text });
 });
 
 const animateLoading = (chatId: number, messageId: number) => {
@@ -68,40 +57,26 @@ const animateLoading = (chatId: number, messageId: number) => {
   runSteps();
 };
 
+let previousState = store.getState();
+
 const unsubscribe = store.subscribe(
-  (state) => {
-    switch (state.currentState.type) {
-      case "Responding": {
-        const newText = state.currentState.message;
-        bot.sendMessage(state.chatId, newText);
-        state.waitForCommand();
-        break;
-      };
-      case "StartProcessingInput": {
-        bot.sendMessage(state.chatId, '...')
-          .then((sentMessage) => {
-            state.processingInput(state.chatId, sentMessage.message_id);
-          });
-      };
-      case "ProcessingInput": {
-        const loadingMsgId = state.currentState.msgId;
-        if (loadingMsgId) {
-          animateLoading(state.chatId, loadingMsgId);
-        }
-      };
-      case "EndProcessingInput": {
-        const newText = state.currentState.message;
-        if (newText) {
-          bot.editMessageText(
-            newText, {
-              chat_id: state.chatId,
-              message_id: state.currentState.msgId,
-            });
-        };
-      };
-      default:
-        break;
+  (currentState) => {
+    // Check for new entries
+    if (currentState.activeRequests.length > previousState.activeRequests.length) {
+      const previousIds = previousState.activeRequests.map(item => item.id);
+      const newElements = currentState.activeRequests.filter(item => !previousIds.includes(item.id));
+      console.log("new request!", newElements);
     }
+
+    // Check for state changes in existing requests
+    currentState.activeRequests.forEach(currentRequest => {
+      const previousRequest = previousState.activeRequests.find(req => req.id === currentRequest.id);
+      if (previousRequest && previousRequest.state !== currentRequest.state) {
+        console.log("state changed for request:", currentRequest.id, "from", previousRequest.state, "to", currentRequest.state);
+      }
+    });
+
+    previousState = currentState;
   }
 );
 

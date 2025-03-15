@@ -103,9 +103,9 @@ export const store = createStore<State & Action>((set, get) => ({
     handleIncomingQrRequest: ({ id, text }) => {
         // Add new request
         get().newRequest({ id, text });
+        get().processRequest(id);
 
-        return get().processRequest(id)
-            .then(() => get().genQr({ text, format: get().format }))
+        return get().genQr({ text, format: get().format })
             .then((response) => get().completeRequest({ id, response }))
             .catch((error) =>  get().abortRequest({ id, error }));
     }
