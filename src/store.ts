@@ -41,6 +41,9 @@ interface Action {
     (payload: { chatId: number; userId: number; text: string }) => void;
     generateQRCode: (text: string, format: string) => Promise<void>;
 
+    setChatId: (id: number) => void;
+    setUserId: (id: number) => void;
+
     newRequest: ({ id: number, text: string }) => void;
     processRequest: (id: number) => void;
     completeRequest: ({ id: number, response: string }) => void;
@@ -48,6 +51,18 @@ interface Action {
 
 export const store = createStore<State & Action>((set, get) => ({
     ...initialState,
+
+    setChatId: (id) => set(
+        produce((state) => {
+            state.chatId = id;
+        })
+    ),
+
+    setUserId: (id) => set(
+        produce((state) => {
+            state.userId = id;
+        })
+    ),
 
     newRequest: ({ id, text }) => set(
         produce((state) => {

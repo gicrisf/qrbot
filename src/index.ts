@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
-import { store } from './store.ts';
+import { store, RequestState } from './store.ts';
 
 dotenv.config();
 
@@ -16,6 +16,7 @@ const bot = new TelegramBot(
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   const text = 'Hello, give me a string after `/qr` and I`ll turn it into a QR code for you!';
+  console.log(msg);
   bot.sendMessage(chatId, `You said: ${text}`);
 });
 
@@ -26,17 +27,34 @@ bot.onText(/\/qr (.+)/, (msg, match) => {
   const text = match[1];
   // store.getState().handleIncomingQrRequest({ chatId, userId, text });
 
+  // TODO replace with actual chat state management
+  const currentState = store.getState();
+  if (currentState.chatId != chatId) {
+    store.getState().setChatId(chatId);
+  }
+
+  if (currentState.userId != userId) {
+    store.getState().setUserId(userId);
+  }
+
   store.getState().handleIncomingQrRequest({ id: msg.message_id, text });
 });
 
-const animateLoading = (chatId: number, messageId: number) => {
+const animateLoading = ({ messageId, requestId }) => {
   const phases = ['.', '..', '...'];
+  const chatId = store.getState().chatId;
+  const getRequest = () => store
+    .getState()
+    .activeRequests
+    .find(req => req.id === requestId);
+
+  const condition = () => getRequest().state === RequestState.Processing;
 
   const runSteps = () => {
     const steps = phases.reduce((promiseChain, phase) => {
       return promiseChain
         .then(() => {
-          if (store.getState().currentState.type == "ProcessingInput") {
+          if (condition()) {
             bot.editMessageText(
               phase, {
                 chat_id: chatId,
@@ -48,8 +66,7 @@ const animateLoading = (chatId: number, messageId: number) => {
     }, Promise.resolve());
 
     steps.then(() => {
-      // condition could be wrapped in a lambda, maybe
-      if (store.getState().currentState.type == "ProcessingInput") {
+      if (condition()) {
         runSteps();
       }
     });
@@ -72,7 +89,38 @@ const unsubscribe = store.subscribe(
     currentState.activeRequests.forEach(currentRequest => {
       const previousRequest = previousState.activeRequests.find(req => req.id === currentRequest.id);
       if (previousRequest && previousRequest.state !== currentRequest.state) {
-        console.log("state changed for request:", currentRequest.id, "from", previousRequest.state, "to", currentRequest.state);
+        switch (currentRequest.state) {
+          case RequestState.New:
+            console.log("Request is now New:", currentRequest.id);
+            break;
+          case RequestState.Processing: {
+            bot.sendMessage(
+              currentState.chatId,
+              `Request is now Processing: ${currentRequest.id}`, {
+                reply_to_message_id: currentRequest.id
+              }).then((sentMessage) => {
+                animateLoading({
+                  // The message we need to edit
+                  messageId: sentMessage.message_id,
+                  // The request we need to check for
+                  requestId: currentRequest.id
+                });
+                console.log("Message sent:", sentMessageId);
+              });
+
+            console.log("Request is now Processing:", currentRequest.id);
+            break;
+          };
+          case RequestState.Completed:
+            console.log("Request is now Completed:", currentRequest.id);
+            break;
+          case RequestState.Error:
+            console.log("Request is now in Error state:", currentRequest.id);
+            break;
+          default:
+            console.log("Unknown state for request:", currentRequest.id);
+            break;
+        }
       }
     });
 
