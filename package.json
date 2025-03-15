@@ -2,7 +2,7 @@
   "name": "qrbot",
   "module": "index.ts",
   "scripts": {
-    "start": "npx ts-node src/index.ts",
+    "start": "bun run src/index.ts",
     "test": "jest"
   },
   "type": "module",

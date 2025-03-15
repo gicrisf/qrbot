@@ -1,36 +1,65 @@
 import { createStore } from 'zustand/vanilla';
-import { toFile } from 'qrcode';
-import { store } from './store';
+import produce from 'immer';
+import { store, QrFormat, RequestState } from './store';
+import { describe, mock, beforeEach, test, jest, expect, it } from "bun:test";
 
-import { describe, mock, beforeEach, test, jest, expect } from "bun:test";
-
-mock.module('qrcode', () => ({
-    toFile: jest.fn((_, __, cb) => cb(null))
-}));
-
-// const mockToFile = toFile as jest.MockedFunction<typeof toFile>;
-
-describe('Zustand Store Actions', () => {
+describe('Zustand Store', () => {
     beforeEach(() => {
         // Reset store state and mocks before each test
         store.setState({
-            inputText: '',
-            outputFileName: '',
-            message: '',
-            currentState: { type: 'WaitingForCommand' }
+            chatId: 0,
+            userId: 0,
+            format: QrFormat.Png,
+            activeRequests: [],
         });
         jest.clearAllMocks();
     });
 
-    test('waitForCommand resets state', () => {
-        store.setState({
-            currentState: { type: 'Responding', message: 'Test' }
-        });
+    it('should add a request', () => {
+        const request = {
+            id: 1,
+            state: RequestState.New,
+            format: QrFormat.Png,
+            response: null,
+        };
 
-        store.getState().waitForCommand();
+        store.getState().newRequest(request);
 
-        expect(store.getState().currentState).toEqual({
-            type: 'WaitingForCommand'
-        });
+        const state = store.getState();
+        expect(state.activeRequests).toContainEqual(request);
+    });
+
+    it('should update the state of an existing request', () => {
+        const id = 1;
+        const request: Request = {
+            id,
+            state: RequestState.New,
+            format: QrFormat.Png,
+            response: null,
+        };
+
+        store.getState().newRequest(request);
+        store.getState().processRequest(id);
+
+        const state = store.getState();
+        const updated = state.activeRequests.find(req => req.id === id);
+        expect(updated.state).toBe(RequestState.Processing);
+    });
+
+    it('should NOT update the state of a non-existent request', () => {
+        const id = 1;
+        const request: Request = {
+            id,
+            state: RequestState.New,
+            format: QrFormat.Png,
+            response: null,
+        };
+
+        store.getState().newRequest(request);
+        store.getState().processRequest(2);
+
+        const state = store.getState();
+        const updated = state.activeRequests.find(req => req.id === 2);
+        expect(updated).toBeUndefined();
     });
 });

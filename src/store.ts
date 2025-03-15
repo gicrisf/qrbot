@@ -1,85 +1,93 @@
 import { createStore } from 'zustand/vanilla';
+import { produce } from 'immer';
 import QRCode from 'qrcode';
 
-type BotState =
-    | { type: "WaitingForCommand" }
-    | { type: "StartProcessingInput" }
-    | { type: "ProcessingInput"; msgId: number }
-    | { type: "EndProcessingInput"; message: string; msgId: number }
-    | { type: "Responding"; message: string }
-    | { type: "Error"; error: string };
+export enum QrFormat {
+    Png = "png",
+    Svg = "svg",
+    Utf8 = "utf8",
+}
+
+export enum RequestState {
+    New = "New",
+    Processing = "Processing",
+    Completed = "Completed",
+    Error = "Error",
+}
+
+type Request = {
+    id: number;
+    state: RequestState;
+    format: QrFormat;
+    response: string | null;
+}
 
 interface State {
     chatId: number;
     userId: number;
-    messageHistory: string[];
-    currentState: BotState;
+    format: QrFormat;
+    activeRequests: Request[];
 }
 
 const initialState: State = {
     chatId: 0,
     userId: 0,
-    messageHistory: [],
-    currentState: { type: "WaitingForCommand" },
+    format: QrFormat.Png,
+    activeRequests: [],
 };
 
 interface Action {
     handleIncomingQrRequest:
     (payload: { chatId: number; userId: number; text: string }) => void;
     generateQRCode: (text: string, format: string) => Promise<void>;
+
+    newRequest: ({ id: number, text: string }) => void;
+    processRequest: (id: number) => void;
+    completeRequest: ({ id: number, response: string }) => void;
 }
 
 export const store = createStore<State & Action>((set, get) => ({
     ...initialState,
-    sendMessage: (chatId, text) => {
-        const currentState = get().currentState;
-        if (currentState.type == "ProcessingInput") {
-            get().endProcessingInput(chatId, text, currentState.msgId);
-        } else {
-            set({
-                chatId,
-                currentState: { type: 'Responding', message: text }
+
+    newRequest: ({ id, text }) => set(
+        produce((state) => {
+            state.activeRequests.push({
+                id,
+                text,
+                format: state.format,
+                state: RequestState.New,
+                response: null,
             })
-        }
-    },
-    waitForCommand: (chatId) => {
-        set({
-            chatId,
-            currentState: { type: 'WaitingForCommand' }
-        });
-    },
-    startProcessingInput: (chatId) => {
-        set({
-            chatId,
-            currentState: { type: 'StartProcessingInput' }
-        });
-    },
-    processingInput: (chatId, loadingMsgId) => {
-        set({
-            chatId,
-            currentState: { type: 'ProcessingInput', msgId: loadingMsgId }
-        });
-    },
-    endProcessingInput: (chatId, text, loadingMsgId) => {
-        set({
-            chatId,
-            currentState: { type: 'EndProcessingInput', message: text, msgId: loadingMsgId }
-        });
-    },
-    // TODO userId not useful, I guess?
-    handleIncomingQrRequest: ({ chatId, userId, text }) => {
-        Promise.resolve()
-            .then(() =>
-                get().startProcessingInput(chatId))
-            .then(() => {
-                get().generateQRCode(text, 'png')
-            })
-            .catch((error) => {
-                const errText = `An error occurred while generating the QR code: ${error}`;
-                get().endProcessingInput(chatId, errText, get().currentState.msgId)
-            });
-    },
-    generateQRCode: (text, format) => {
+        })),
+
+    processRequest: (id) => set(
+        produce((state) => {
+            const req = state.activeRequests.find(req => req.id === id);
+            if (req) { req.state = RequestState.Processing }
+        })
+    ),
+
+    completeRequest: ({ id, response }) => set(
+        produce((state) => {
+            const req = state.activeRequests.find(req => req.id === id);
+            if (req) {
+                req.state = RequestState.Completed
+                req.response = response
+            }
+        })
+    ),
+
+    abortRequest: ({ id, error }) => set(
+        produce((state) => {
+            const req = state.activeRequests.find(req => req.id === id);
+            if (req) {
+                req.state = RequestState.Error
+                req.response = error
+            }
+        })
+    ),
+
+    genQr: ({ text, format }) => {
         const sanitizedFileName = text.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
         const outputFileName = `${sanitizedFileName}_qr.${format}`;
 
@@ -88,18 +96,17 @@ export const store = createStore<State & Action>((set, get) => ({
             errorCorrectionLevel: 'H'
         })
         .then(() => {
-            const succTest = `QR code saved as ${outputFileName}`;
-            const checkForLoadingMsg = () => {
-                return new Promise(res => setTimeout(res, 1000))
-                    .then(() => {
-                        if (get().currentState.type == "ProcessingInput") {
-                            get().endProcessingInput(get().chatId, succTest, get().currentState.msgId)
-                        } else {
-                            checkForLoadingMsg()
-                        }
-                    })
-            }
-            checkForLoadingMsg();
-        });
+            return `QR code saved as ${outputFileName}`;
+        })
+    },
+
+    handleIncomingQrRequest: ({ id, text }) => {
+        // Add new request
+        get().newRequest({ id, text });
+
+        return get().processRequest(id)
+            .then(() => get().genQr({ text, format: get().format }))
+            .then((response) => get().completeRequest({ id, response }))
+            .catch((error) =>  get().abortRequest({ id, error }));
     }
 }));
