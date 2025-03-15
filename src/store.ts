@@ -1,3 +1,5 @@
+import { exists, mkdir } from 'fs/promises';
+import { join } from 'path';
 import { createStore } from 'zustand/vanilla';
 import { produce } from 'immer';
 import QRCode from 'qrcode';
@@ -71,6 +73,7 @@ export const store = createStore<State & Action>((set, get) => ({
                 text,
                 format: state.format,
                 state: RequestState.New,
+                responseId: null,
                 response: null,
             })
         })),
@@ -104,15 +107,20 @@ export const store = createStore<State & Action>((set, get) => ({
 
     genQr: ({ text, format }) => {
         const sanitizedFileName = text.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-        const outputFileName = `${sanitizedFileName}_qr.${format}`;
+        const outputDir = 'generatedImages';
+        const outputFileName = join(outputDir, `${sanitizedFileName}_qr.${format}`);
 
-        return QRCode.toFile(outputFileName, text, {
-            type: format,
-            errorCorrectionLevel: 'H'
-        })
-        .then(() => {
-            return `QR code saved as ${outputFileName}`;
-        })
+        return exists(outputDir)
+            .then((dirExists) => {
+                if (!dirExists) {
+                    return mkdir(outputDir, { recursive: true });
+                }
+            })
+            .then(() => QRCode.toFile(outputFileName, text, {
+                type: format,
+                errorCorrectionLevel: 'H'
+            }))
+            .then(() => outputFileName);
     },
 
     handleIncomingQrRequest: ({ id, text }) => {

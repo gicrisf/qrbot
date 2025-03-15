@@ -1,6 +1,12 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import { store, RequestState } from './store.ts';
+
+// Disable octet stream warning
+// https://github.com/yagop/node-telegram-bot-api/issues/838
+process.env.NTBA_FIX_319 = 1;
+process.env.NTBA_FIX_350 = 0;
 
 dotenv.config();
 
@@ -25,7 +31,6 @@ bot.onText(/\/qr (.+)/, (msg, match) => {
   const userId = msg.from.id;
   // Text after '/qr'
   const text = match[1];
-  // store.getState().handleIncomingQrRequest({ chatId, userId, text });
 
   // TODO replace with actual chat state management
   const currentState = store.getState();
@@ -41,37 +46,50 @@ bot.onText(/\/qr (.+)/, (msg, match) => {
 });
 
 const animateLoading = ({ messageId, requestId }) => {
-  const phases = ['.', '..', '...'];
-  const chatId = store.getState().chatId;
-  const getRequest = () => store
-    .getState()
-    .activeRequests
-    .find(req => req.id === requestId);
+  return new Promise((resolve) => {
+    const getRequest = () => store
+      .getState()
+      .activeRequests
+      .find(req => req.id === requestId);
 
-  const condition = () => getRequest().state === RequestState.Processing;
+    const condition = () => getRequest().state === RequestState.Processing;
 
-  const runSteps = () => {
-    const steps = phases.reduce((promiseChain, phase) => {
-      return promiseChain
-        .then(() => {
-          if (condition()) {
-            bot.editMessageText(
-              phase, {
-                chat_id: chatId,
-                message_id: messageId
-              })
-          }
-        })
-        .then(() => new Promise(resolve => setTimeout(resolve, 1000)))
-    }, Promise.resolve());
+    // Return messageId immediately if condition is not met
+    if (!condition()) {
+      resolve(messageId);
+      return;
+    }
 
-    steps.then(() => {
-      if (condition()) {
-        runSteps();
-      }
-    });
-  };
-  runSteps();
+    const phases = ['.', '..', '...'];
+    const chatId = store.getState().chatId;
+
+    const runSteps = () => {
+      const steps = phases.reduce((promiseChain, phase) => {
+        return promiseChain
+          .then(() => {
+            if (condition()) {
+              bot.editMessageText(
+                phase, {
+                  chat_id: chatId,
+                  message_id: messageId
+                })
+            }
+          })
+          .then(() => new Promise(resolve => setTimeout(resolve, 1000)))
+      }, Promise.resolve());
+
+      steps.then(() => {
+        if (condition()) {
+          runSteps();
+        } else {
+          // Resolve with messageId when condition is no longer met
+          resolve(messageId);
+        }
+      });
+    };
+
+    runSteps();
+  });
 };
 
 let previousState = store.getState();
@@ -94,25 +112,33 @@ const unsubscribe = store.subscribe(
             console.log("Request is now New:", currentRequest.id);
             break;
           case RequestState.Processing: {
+            console.log("Request is now Processing:", currentRequest.id);
             bot.sendMessage(
               currentState.chatId,
               `Request is now Processing: ${currentRequest.id}`, {
                 reply_to_message_id: currentRequest.id
-              }).then((sentMessage) => {
-                animateLoading({
+              })
+              .then((sentMessage) => {
+                return animateLoading({
                   // The message we need to edit
                   messageId: sentMessage.message_id,
                   // The request we need to check for
                   requestId: currentRequest.id
                 });
-                console.log("Message sent:", sentMessageId);
               });
 
-            console.log("Request is now Processing:", currentRequest.id);
             break;
           };
           case RequestState.Completed:
-            console.log("Request is now Completed:", currentRequest.id);
+            console.log("Request is now Completed:", currentRequest);
+            bot.sendPhoto(currentState.chatId,
+                          fs.createReadStream(currentRequest.response),
+                          { caption: currentRequest.response,
+                            reply_to_message_id: currentRequest.id
+                          })
+                .then(() => console.log('Photo sent!'))
+                .catch(err => console.error('Error sending photo:', err));
+
             break;
           case RequestState.Error:
             console.log("Request is now in Error state:", currentRequest.id);
