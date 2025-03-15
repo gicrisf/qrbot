@@ -19,6 +19,7 @@ export enum RequestState {
 
 type Request = {
     id: number;
+    text: string;
     state: RequestState;
     format: QrFormat;
     response: string | null;
@@ -45,6 +46,7 @@ interface Action {
 
     setChatId: (id: number) => void;
     setUserId: (id: number) => void;
+    setFormat: (format: QrFormat) => void;
 
     newRequest: ({ id: number, text: string }) => void;
     processRequest: (id: number) => void;
@@ -63,6 +65,12 @@ export const store = createStore<State & Action>((set, get) => ({
     setUserId: (id) => set(
         produce((state) => {
             state.userId = id;
+        })
+    ),
+
+    setFormat: (format) => set(
+        produce((state) => {
+            state.format = format;
         })
     ),
 

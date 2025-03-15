@@ -1,7 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import { store, RequestState } from './store.ts';
+import { store, RequestState, QrFormat } from './store.ts';
 
 // Disable octet stream warning
 // https://github.com/yagop/node-telegram-bot-api/issues/838
@@ -21,16 +21,83 @@ const bot = new TelegramBot(
 
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  const text = 'Hello, give me a string after `/qr` and I`ll turn it into a QR code for you!';
-  console.log(msg);
-  bot.sendMessage(chatId, `You said: ${text}`);
+  const welcomeMessage = `👋 Welcome to the QR Code Bot!
+I can generate QR codes from text.
+Send me any text, and I'll create a QR code for you!
+Use /help for more info.`;
+
+  bot.sendMessage(chatId, welcomeMessage);
 });
 
-bot.onText(/\/qr (.+)/, (msg, match) => {
+bot.onText(/\/help/, (msg) => {
+  const chatId = msg.chat.id;
+  const helpMessage = `📖 **How to Use This Bot**
+1. Send me any text, and I'll generate a QR code for it.
+2. Use /settings to configure the QR code format (e.g., PNG, SVG).
+3. Use /start to see the welcome message again.
+
+**Commands:**
+/start - Welcome message
+/help - Show this help message
+/settings - Configure QR code settings`;
+
+  bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+});
+
+bot.onText(/\/settings/, (msg) => {
+  const chatId = msg.chat.id;
+  const settingsMessage = `⚙️ **Settings**
+Choose the QR code format:
+1. PNG (default)
+2. SVG
+
+Reply with the number of your choice.`;
+
+  bot.sendMessage(chatId, settingsMessage, {
+    reply_markup: {
+      // keyboard: [['1. PNG', '2. SVG', '3. UTF-8']],
+      keyboard: [['/set 1. PNG', '/set 2. SVG']],
+      one_time_keyboard: true,
+    },
+  });
+
+  // Handle user's choice
+  bot.once('message', (msg) => {
+    const choice = msg.text;
+    let format;
+
+    switch (choice) {
+      case '/set 1. PNG':
+        format = QrFormat.Png;
+        break;
+      case '/set 2. SVG':
+        format = QrFormat.Svg;
+        break;
+      // Still not supported
+      case '/set 3. UTF-8':
+        format = QrFormat.Utf8;
+        break;
+      default:
+        bot.sendMessage(chatId, 'Invalid choice. Please try again.');
+        return;
+    }
+
+    store.getState().setFormat(format);
+    console.log(store.getState());
+
+    bot.sendMessage(chatId, `✅ QR code format set to ${format.toUpperCase()}.`);
+  });
+});
+
+bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
-  // Text after '/qr'
-  const text = match[1];
+  const text = msg.text;
+
+  // Ignore commands (start, help, settings)
+  if (text.startsWith('/')) {
+    return;
+  }
 
   // TODO replace with actual chat state management
   const currentState = store.getState();
@@ -115,7 +182,7 @@ const unsubscribe = store.subscribe(
             console.log("Request is now Processing:", currentRequest.id);
             bot.sendMessage(
               currentState.chatId,
-              `Request is now Processing: ${currentRequest.id}`, {
+              `Bot is now Processing: ${currentRequest.text}`, {
                 reply_to_message_id: currentRequest.id
               })
               .then((sentMessage) => {
@@ -131,13 +198,33 @@ const unsubscribe = store.subscribe(
           };
           case RequestState.Completed:
             console.log("Request is now Completed:", currentRequest);
-            bot.sendPhoto(currentState.chatId,
-                          fs.createReadStream(currentRequest.response),
-                          { caption: currentRequest.response,
-                            reply_to_message_id: currentRequest.id
-                          })
+            const format = store.getState().format;
+
+            if (format === QrFormat.Png) {
+              bot.sendPhoto(
+                currentState.chatId,
+                fs.createReadStream(currentRequest.response),
+                {
+                  caption: `QR image for request: ${currentRequest.text}`,
+                  reply_to_message_id: currentRequest.id
+                }
+              )
                 .then(() => console.log('Photo sent!'))
                 .catch(err => console.error('Error sending photo:', err));
+            } else if (format === QrFormat.Svg) {
+              bot.sendDocument(
+                currentState.chatId,
+                fs.createReadStream(currentRequest.response),
+                {
+                  caption: `QR image for request: ${currentRequest.text}`,
+                  reply_to_message_id: currentRequest.id
+                }
+              )
+                .then(() => console.log('SVG sent!'))
+                .catch(err => console.error('Error sending SVG:', err));
+            } else {
+              console.log('Unsupported format:', format);
+            }
 
             break;
           case RequestState.Error:
