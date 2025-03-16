@@ -19,67 +19,72 @@ export enum RequestState {
 
 type Request = {
     id: number;
+    chatId: number;
     text: string;
     state: RequestState;
     format: QrFormat;
     response: string | null;
 }
 
-interface State {
-    chatId: number;
+type Chat = {
+    id: number;
     userId: number;
     format: QrFormat;
-    activeRequests: Request[];
+}
+
+interface State {
+    filesDirectory: string;
+    chats: Chat[];
+    requests: Request[];
 }
 
 const initialState: State = {
-    chatId: 0,
-    userId: 0,
-    format: QrFormat.Png,
-    activeRequests: [],
-};
+    filesDirectory: "generatedImages",
+    chats: [],
+    requests: [],
+}
 
 interface Action {
-    handleIncomingQrRequest:
-    (payload: { chatId: number; userId: number; text: string }) => void;
-    generateQRCode: (text: string, format: string) => Promise<void>;
+    newChat: (id: number) => void;
+    setChatFormat: (id: number, format: QrFormat) => void;
 
-    setChatId: (id: number) => void;
-    setUserId: (id: number) => void;
-    setFormat: (format: QrFormat) => void;
-
-    newRequest: ({ id: number, text: string }) => void;
+    newRequest: ({ id, chatId, text, format }: { id: number, chatId: number, text: string, format: QrFormat }) => void;
     processRequest: (id: number) => void;
-    completeRequest: ({ id: number, response: string }) => void;
+    completeRequest: ({ id, response }: { id: number, response: string }) => void;
+    abortRequest: ({ id, error }: { id: number, error: Error }) => void;
+
+    genQr: ({ text, format }: { text: string, format: QrFormat }) => Promise<string>;
 }
 
 export const store = createStore<State & Action>((set, get) => ({
     ...initialState,
 
-    setChatId: (id) => set(
+    newChat: (id) => set(
         produce((state) => {
-            state.chatId = id;
-        })
-    ),
-
-    setUserId: (id) => set(
-        produce((state) => {
-            state.userId = id;
-        })
-    ),
-
-    setFormat: (format) => set(
-        produce((state) => {
-            state.format = format;
-        })
-    ),
-
-    newRequest: ({ id, text }) => set(
-        produce((state) => {
-            state.activeRequests.push({
+            state.chats.push({
                 id,
+                format: QrFormat.Png,
+            })
+        })
+    ),
+
+    setChatFormat: (id, format) => set(
+        produce((state) => {
+            const chat = state.chats.find((chat: Chat) => chat.id === id);
+            // TODO Else? It must exists.
+            if (chat) {
+                chat.format = format;
+            }
+        })
+    ),
+
+    newRequest: ({ id, chatId, text, format }) => set(
+        produce((state) => {
+            state.requests.push({
+                id,
+                chatId,
                 text,
-                format: state.format,
+                format,
                 state: RequestState.New,
                 responseId: null,
                 response: null,
@@ -88,14 +93,14 @@ export const store = createStore<State & Action>((set, get) => ({
 
     processRequest: (id) => set(
         produce((state) => {
-            const req = state.activeRequests.find(req => req.id === id);
+            const req = state.requests.find((req: Request) => req.id === id);
             if (req) { req.state = RequestState.Processing }
         })
     ),
 
     completeRequest: ({ id, response }) => set(
         produce((state) => {
-            const req = state.activeRequests.find(req => req.id === id);
+            const req = state.requests.find((req: Request) => req.id === id);
             if (req) {
                 req.state = RequestState.Completed
                 req.response = response
@@ -105,7 +110,7 @@ export const store = createStore<State & Action>((set, get) => ({
 
     abortRequest: ({ id, error }) => set(
         produce((state) => {
-            const req = state.activeRequests.find(req => req.id === id);
+            const req = state.requests.find((req: Request) => req.id === id);
             if (req) {
                 req.state = RequestState.Error
                 req.response = error
@@ -130,14 +135,4 @@ export const store = createStore<State & Action>((set, get) => ({
             }))
             .then(() => outputFileName);
     },
-
-    handleIncomingQrRequest: ({ id, text }) => {
-        // Add new request
-        get().newRequest({ id, text });
-        get().processRequest(id);
-
-        return get().genQr({ text, format: get().format })
-            .then((response) => get().completeRequest({ id, response }))
-            .catch((error) =>  get().abortRequest({ id, error }));
-    }
 }));

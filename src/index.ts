@@ -5,8 +5,8 @@ import { store, RequestState, QrFormat } from './store.ts';
 
 // Disable octet stream warning
 // https://github.com/yagop/node-telegram-bot-api/issues/838
-process.env.NTBA_FIX_319 = 1;
-process.env.NTBA_FIX_350 = 0;
+process.env.NTBA_FIX_319 = "1";
+process.env.NTBA_FIX_350 = "0";
 
 dotenv.config();
 
@@ -19,7 +19,7 @@ const bot = new TelegramBot(
     { polling: true }
 );
 
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, (msg: TelegramBot.Message) => {
   const chatId = msg.chat.id;
   const welcomeMessage = `👋 Welcome to the QR Code Bot!
 I can generate QR codes from text.
@@ -44,7 +44,7 @@ bot.onText(/\/help/, (msg) => {
   bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
 });
 
-bot.onText(/\/settings/, (msg) => {
+bot.onText(/\/settings/, (msg: TelegramBot.Message) => {
   const chatId = msg.chat.id;
   const settingsMessage = `⚙️ **Settings**
 Choose the QR code format:
@@ -55,14 +55,16 @@ Reply with the number of your choice.`;
 
   bot.sendMessage(chatId, settingsMessage, {
     reply_markup: {
-      // keyboard: [['1. PNG', '2. SVG', '3. UTF-8']],
-      keyboard: [['/set 1. PNG', '/set 2. SVG']],
+      keyboard: [
+        [{ text: '/set 1. PNG' },
+         { text: '/set 2. SVG' }]
+      ],
       one_time_keyboard: true,
     },
   });
 
   // Handle user's choice
-  bot.once('message', (msg) => {
+  bot.once('message', (msg: TelegramBot.Message) => {
     const choice = msg.text;
     let format;
 
@@ -82,41 +84,49 @@ Reply with the number of your choice.`;
         return;
     }
 
-    store.getState().setFormat(format);
+    store.getState().setChatFormat(chatId, format);
     console.log(store.getState());
 
     bot.sendMessage(chatId, `✅ QR code format set to ${format.toUpperCase()}.`);
   });
 });
 
-bot.on('message', (msg) => {
+bot.on('message', (msg: TelegramBot.Message) => {
   const chatId = msg.chat.id;
-  const userId = msg.from.id;
+  const id = msg.message_id;
   const text = msg.text;
 
-  // Ignore commands (start, help, settings)
-  if (text.startsWith('/')) {
-    return;
-  }
+  // kinda awful
+  let chat = store.getState().chats.find(chat => chat.id === chatId);
 
-  // TODO replace with actual chat state management
-  const currentState = store.getState();
-  if (currentState.chatId != chatId) {
-    store.getState().setChatId(chatId);
-  }
+  if (!chat) {
+    // const userId = msg.from.id;
+    store.getState().newChat(chatId);
+    chat = store.getState().chats.find(chat => chat.id === chatId);
+    console.log("new chat!", chat);
+  };
 
-  if (currentState.userId != userId) {
-    store.getState().setUserId(userId);
-  }
+  if (chat && text) {
+    // Ignore commands (start, help, settings)
+    if (text.startsWith('/')) {
+      return;
+    };
 
-  store.getState().handleIncomingQrRequest({ id: msg.message_id, text });
+    const format: QrFormat = chat.format;
+
+    store.getState().newRequest({ id, chatId, text, format });
+    store.getState().processRequest(id);
+    store.getState().genQr({ text, format })
+      .then((response) => store.getState().completeRequest({ id, response }))
+      .catch((error: Error) =>  store.getState().abortRequest({ id, error }));
+  }
 });
 
-const animateLoading = ({ messageId, requestId }) => {
+const animateLoading = ({ messageId, requestId } : { messageId: number, requestId: number }) => {
   return new Promise((resolve) => {
     const getRequest = () => store
       .getState()
-      .activeRequests
+      .requests
       .find(req => req.id === requestId);
 
     const condition = () => getRequest().state === RequestState.Processing;
@@ -128,7 +138,7 @@ const animateLoading = ({ messageId, requestId }) => {
     }
 
     const phases = ['.', '..', '...'];
-    const chatId = store.getState().chatId;
+    const chatId = getRequest().chatId;
 
     const runSteps = () => {
       const steps = phases.reduce((promiseChain, phase) => {
@@ -164,15 +174,15 @@ let previousState = store.getState();
 const unsubscribe = store.subscribe(
   (currentState) => {
     // Check for new entries
-    if (currentState.activeRequests.length > previousState.activeRequests.length) {
-      const previousIds = previousState.activeRequests.map(item => item.id);
-      const newElements = currentState.activeRequests.filter(item => !previousIds.includes(item.id));
+    if (currentState.requests.length > previousState.requests.length) {
+      const previousIds = previousState.requests.map(item => item.id);
+      const newElements = currentState.requests.filter(item => !previousIds.includes(item.id));
       console.log("new request!", newElements);
     }
 
     // Check for state changes in existing requests
-    currentState.activeRequests.forEach(currentRequest => {
-      const previousRequest = previousState.activeRequests.find(req => req.id === currentRequest.id);
+    currentState.requests.forEach(currentRequest => {
+      const previousRequest = previousState.requests.find(req => req.id === currentRequest.id);
       if (previousRequest && previousRequest.state !== currentRequest.state) {
         switch (currentRequest.state) {
           case RequestState.New:
@@ -181,11 +191,11 @@ const unsubscribe = store.subscribe(
           case RequestState.Processing: {
             console.log("Request is now Processing:", currentRequest.id);
             bot.sendMessage(
-              currentState.chatId,
+              currentRequest.chatId,
               `Bot is now Processing: ${currentRequest.text}`, {
                 reply_to_message_id: currentRequest.id
               })
-              .then((sentMessage) => {
+              .then((sentMessage: TelegramBot.Message) => {
                 return animateLoading({
                   // The message we need to edit
                   messageId: sentMessage.message_id,
@@ -198,11 +208,11 @@ const unsubscribe = store.subscribe(
           };
           case RequestState.Completed:
             console.log("Request is now Completed:", currentRequest);
-            const format = store.getState().format;
+            const format = currentRequest.format;
 
             if (format === QrFormat.Png) {
               bot.sendPhoto(
-                currentState.chatId,
+                currentRequest.chatId,
                 fs.createReadStream(currentRequest.response),
                 {
                   caption: `QR image for request: ${currentRequest.text}`,
@@ -210,10 +220,10 @@ const unsubscribe = store.subscribe(
                 }
               )
                 .then(() => console.log('Photo sent!'))
-                .catch(err => console.error('Error sending photo:', err));
+                .catch((err: Error) => console.error('Error sending photo:', err));
             } else if (format === QrFormat.Svg) {
               bot.sendDocument(
-                currentState.chatId,
+                currentRequest.chatId,
                 fs.createReadStream(currentRequest.response),
                 {
                   caption: `QR image for request: ${currentRequest.text}`,
@@ -221,7 +231,7 @@ const unsubscribe = store.subscribe(
                 }
               )
                 .then(() => console.log('SVG sent!'))
-                .catch(err => console.error('Error sending SVG:', err));
+                .catch((err: Error) => console.error('Error sending SVG:', err));
             } else {
               console.log('Unsupported format:', format);
             }
@@ -246,7 +256,7 @@ process.on('SIGINT', () => {
   process.exit();
 });
 
-bot.on('polling_error', (error) => {
+bot.on('polling_error', (error: Error) => {
   console.error('Polling error:', error);
   unsubscribe();
 });

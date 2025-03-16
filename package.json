@@ -17,6 +17,8 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@types/node-telegram-bot-api": "^0.64.7",
+    "@types/qrcode": "^1.5.5",
     "dotenv": "^16.4.7",
     "immer": "^10.1.1",
     "node-telegram-bot-api": "^0.66.0",
