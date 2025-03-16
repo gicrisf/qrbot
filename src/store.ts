@@ -17,7 +17,7 @@ export enum RequestState {
     Error = "Error",
 }
 
-type Request = {
+export type Request = {
     id: number;
     chatId: number;
     text: string;
@@ -26,10 +26,16 @@ type Request = {
     response: string | null;
 }
 
+export enum ChatMode {
+    Normal = "Normal",
+    Settings = "Settings",
+}
+
 type Chat = {
     id: number;
     userId: number;
     format: QrFormat;
+    mode: ChatMode;
 }
 
 interface State {
@@ -47,6 +53,7 @@ const initialState: State = {
 interface Action {
     newChat: (id: number) => void;
     setChatFormat: (id: number, format: QrFormat) => void;
+    setChatMode: (id: number, mode: ChatMode) => void;
 
     newRequest: ({ id, chatId, text, format }: { id: number, chatId: number, text: string, format: QrFormat }) => void;
     processRequest: (id: number) => void;
@@ -64,6 +71,7 @@ export const store = createStore<State & Action>((set, get) => ({
             state.chats.push({
                 id,
                 format: QrFormat.Png,
+                mode: ChatMode.Normal,
             })
         })
     ),
@@ -74,6 +82,16 @@ export const store = createStore<State & Action>((set, get) => ({
             // TODO Else? It must exists.
             if (chat) {
                 chat.format = format;
+            }
+        })
+    ),
+
+    setChatMode: (id, mode) => set(
+        produce((state) => {
+            const chat = state.chats.find((chat: Chat) => chat.id === id);
+            // TODO Else? It must exists.
+            if (chat) {
+                chat.mode = mode;
             }
         })
     ),

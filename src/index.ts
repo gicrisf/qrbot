@@ -1,7 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import { store, RequestState, QrFormat } from './store.ts';
+import { store, Request, RequestState, QrFormat, ChatMode } from './store.ts';
 
 // Disable octet stream warning
 // https://github.com/yagop/node-telegram-bot-api/issues/838
@@ -29,7 +29,7 @@ Use /help for more info.`;
   bot.sendMessage(chatId, welcomeMessage);
 });
 
-bot.onText(/\/help/, (msg) => {
+bot.onText(/\/help/, (msg: TelegramBot.Message) => {
   const chatId = msg.chat.id;
   const helpMessage = `📖 **How to Use This Bot**
 1. Send me any text, and I'll generate a QR code for it.
@@ -51,17 +51,12 @@ Choose the QR code format:
 1. PNG (default)
 2. SVG
 
-Reply with the number of your choice.`;
+Use /setPng for PNG or /setSvg for SVG.`;
 
-  bot.sendMessage(chatId, settingsMessage, {
-    reply_markup: {
-      keyboard: [
-        [{ text: '/set 1. PNG' },
-         { text: '/set 2. SVG' }]
-      ],
-      one_time_keyboard: true,
-    },
-  });
+  bot.sendMessage(chatId, settingsMessage);
+
+  // Mark user as having launched /settings
+  store.getState().setChatMode(chatId, ChatMode.Settings);
 
   // Handle user's choice
   bot.once('message', (msg: TelegramBot.Message) => {
@@ -69,15 +64,11 @@ Reply with the number of your choice.`;
     let format;
 
     switch (choice) {
-      case '/set 1. PNG':
+      case '/set_png':
         format = QrFormat.Png;
         break;
-      case '/set 2. SVG':
+      case '/set_svg':
         format = QrFormat.Svg;
-        break;
-      // Still not supported
-      case '/set 3. UTF-8':
-        format = QrFormat.Utf8;
         break;
       default:
         bot.sendMessage(chatId, 'Invalid choice. Please try again.');
@@ -88,6 +79,8 @@ Reply with the number of your choice.`;
     console.log(store.getState());
 
     bot.sendMessage(chatId, `✅ QR code format set to ${format.toUpperCase()}.`);
+    // Back to the normal mode
+    store.getState().setChatMode(chatId, ChatMode.Normal);
   });
 });
 
@@ -169,85 +162,140 @@ const animateLoading = ({ messageId, requestId } : { messageId: number, requestI
   });
 };
 
-let previousState = store.getState();
+let previousRequests = store.getState().requests;
+let previousChats = store.getState().chats;
+
+const handleNewRequests = (currentRequests: Request[], previousRequests: Request[]) => {
+  if (currentRequests.length > previousRequests.length) {
+    const previousIds = previousRequests.map(item => item.id);
+    const newElements = currentRequests.filter(item => !previousIds.includes(item.id));
+    console.log("new request!", newElements);
+  }
+};
+
+const handleStateChange = (currentRequest: Request, previousRequest: Request) => {
+  if (previousRequest.state !== currentRequest.state) {
+    switch (currentRequest.state) {
+      case RequestState.New:
+        console.log("Request is now New:", currentRequest.id);
+        break;
+      case RequestState.Processing:
+        console.log("Request is now Processing:", currentRequest.id);
+        bot.sendMessage(
+          currentRequest.chatId,
+          `Bot is now Processing: ${currentRequest.text}`, {
+            reply_to_message_id: currentRequest.id
+          })
+          .then((sentMessage: TelegramBot.Message) => {
+            return animateLoading({
+              messageId: sentMessage.message_id,
+              requestId: currentRequest.id
+            });
+          });
+        break;
+      case RequestState.Completed:
+        console.log("Request is now Completed:", currentRequest);
+        handleCompletedRequest(currentRequest);
+        break;
+      case RequestState.Error:
+        console.log("Request is now in Error state:", currentRequest.id);
+        break;
+      default:
+        console.log("Unknown state for request:", currentRequest.id);
+        break;
+    }
+  }
+};
+
+const handleCompletedRequest = (currentRequest: Request) => {
+  const format = currentRequest.format;
+  switch (format) {
+    case QrFormat.Png:
+      bot.sendPhoto(
+        currentRequest.chatId,
+        fs.createReadStream(currentRequest.response),
+        {
+          caption: `QR image for request: ${currentRequest.text}`,
+          reply_to_message_id: currentRequest.id
+        }
+      )
+      .then(() => console.log('Photo sent!'))
+      .catch((err: Error) => console.error('Error sending photo:', err));
+      break;
+    case QrFormat.Svg:
+      bot.sendDocument(
+        currentRequest.chatId,
+        fs.createReadStream(currentRequest.response),
+        {
+          caption: `QR image for request: ${currentRequest.text}`,
+          reply_to_message_id: currentRequest.id
+        }
+      )
+      .then(() => console.log('SVG sent!'))
+      .catch((err: Error) => console.error('Error sending SVG:', err));
+      break;
+    default:
+      console.log('Unsupported format:', format);
+      break;
+  }
+};
+
+const handleChatChange = (currentChat: Chat) => {
+  const mode = currentChat.mode;
+  switch (mode) {
+    case ChatMode.Normal:
+      bot.setMyCommands([
+        { command: '/start', description: 'Show start message' },
+        { command: '/help', description: 'Show help message' },
+        { command: '/settings', description: 'Change settings' }
+      ], { scope: { type: 'chat', chat_id: currentChat.id } })
+          .then(() => {
+            console.log('Settings commands are now available.');
+          })
+          .catch((error) => {
+            console.error('Error setting commands:', error);
+          });
+      break;
+    case ChatMode.Settings:
+      bot.setMyCommands([
+        { command: '/set_png', description: 'Set QR code format to PNG' },
+        { command: '/set_svg', description: 'Set QR code format to SVG' }
+      ], { scope: { type: 'chat', chat_id: currentChat.id } })
+        .then(() => {
+          console.log('Settings commands are now available.');
+        })
+        .catch((error) => {
+          console.error('Error setting commands:', error);
+        });
+      break;
+    default:
+      console.log("not supported mode", currentChat.id);
+  }
+};
 
 const unsubscribe = store.subscribe(
-  (currentState) => {
-    // Check for new entries
-    if (currentState.requests.length > previousState.requests.length) {
-      const previousIds = previousState.requests.map(item => item.id);
-      const newElements = currentState.requests.filter(item => !previousIds.includes(item.id));
-      console.log("new request!", newElements);
-    }
+  (state) => {
+    const currentRequests = state.requests;
+    handleNewRequests(currentRequests, previousRequests);
 
-    // Check for state changes in existing requests
-    currentState.requests.forEach(currentRequest => {
-      const previousRequest = previousState.requests.find(req => req.id === currentRequest.id);
-      if (previousRequest && previousRequest.state !== currentRequest.state) {
-        switch (currentRequest.state) {
-          case RequestState.New:
-            console.log("Request is now New:", currentRequest.id);
-            break;
-          case RequestState.Processing: {
-            console.log("Request is now Processing:", currentRequest.id);
-            bot.sendMessage(
-              currentRequest.chatId,
-              `Bot is now Processing: ${currentRequest.text}`, {
-                reply_to_message_id: currentRequest.id
-              })
-              .then((sentMessage: TelegramBot.Message) => {
-                return animateLoading({
-                  // The message we need to edit
-                  messageId: sentMessage.message_id,
-                  // The request we need to check for
-                  requestId: currentRequest.id
-                });
-              });
-
-            break;
-          };
-          case RequestState.Completed:
-            console.log("Request is now Completed:", currentRequest);
-            const format = currentRequest.format;
-
-            if (format === QrFormat.Png) {
-              bot.sendPhoto(
-                currentRequest.chatId,
-                fs.createReadStream(currentRequest.response),
-                {
-                  caption: `QR image for request: ${currentRequest.text}`,
-                  reply_to_message_id: currentRequest.id
-                }
-              )
-                .then(() => console.log('Photo sent!'))
-                .catch((err: Error) => console.error('Error sending photo:', err));
-            } else if (format === QrFormat.Svg) {
-              bot.sendDocument(
-                currentRequest.chatId,
-                fs.createReadStream(currentRequest.response),
-                {
-                  caption: `QR image for request: ${currentRequest.text}`,
-                  reply_to_message_id: currentRequest.id
-                }
-              )
-                .then(() => console.log('SVG sent!'))
-                .catch((err: Error) => console.error('Error sending SVG:', err));
-            } else {
-              console.log('Unsupported format:', format);
-            }
-
-            break;
-          case RequestState.Error:
-            console.log("Request is now in Error state:", currentRequest.id);
-            break;
-          default:
-            console.log("Unknown state for request:", currentRequest.id);
-            break;
-        }
+    currentRequests.forEach(currentRequest => {
+      const previousRequest = previousRequests.find(req => req.id === currentRequest.id);
+      if (previousRequest) {
+        handleStateChange(currentRequest, previousRequest);
       }
     });
 
-    previousState = currentState;
+    previousRequests = currentRequests;
+
+    const currentChats = state.chats;
+    currentChats.forEach(currentChat => {
+      const previousChat = previousChats.find(chat => chat.id === currentChat.id);
+      if (previousChat) {
+        handleChatChange(currentChat, previousChat);
+      }
+    })
+
+    previousChats = currentChats;
   }
 );
 
