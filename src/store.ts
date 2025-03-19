@@ -149,6 +149,7 @@ export const store = createStore<State & Action>((set, get) => ({
             })
             .then(() => QRCode.toFile(outputFileName, text, {
                 type: format,
+                scale: 10,
                 errorCorrectionLevel: 'H'
             }))
             .then(() => outputFileName);
