@@ -87,9 +87,10 @@ export const store = createStore<State & Action>((set, get) => ({
     setChatFormat: (id, format) => set(
         produce((state) => {
             const chat = state.chats.find((chat: Chat) => chat.id === id);
-            // TODO Else? It must exists.
             if (chat) {
                 chat.format = format;
+            } else {
+                throw new Error(`Chat with id ${id} not found`);
             }
         })
     ),
@@ -97,9 +98,10 @@ export const store = createStore<State & Action>((set, get) => ({
     setChatMode: (id, mode) => set(
         produce((state) => {
             const chat = state.chats.find((chat: Chat) => chat.id === id);
-            // TODO Else? It must exists.
             if (chat) {
                 chat.mode = mode;
+            } else {
+                throw new Error(`Chat with id ${id} not found`);
             }
         })
     ),
