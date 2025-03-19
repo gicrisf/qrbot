@@ -4,6 +4,8 @@ import { createStore } from 'zustand/vanilla';
 import { produce } from 'immer';
 import QRCode from 'qrcode';
 
+const global_overload_limit = 5;
+
 export enum QrFormat {
     Png = "png",
     Svg = "svg",
@@ -38,10 +40,16 @@ type Chat = {
     mode: ChatMode;
 }
 
+export enum BotState {
+    Idle = 0,
+    Overloaded = 1
+}
+
 interface State {
     filesDirectory: string;
     chats: Chat[];
     requests: Request[];
+    state: BotState;
 }
 
 const initialState: State = {
@@ -98,16 +106,28 @@ export const store = createStore<State & Action>((set, get) => ({
 
     newRequest: ({ id, chatId, text, format }) => set(
         produce((state) => {
-            state.requests.push({
-                id,
-                chatId,
-                text,
-                format,
-                state: RequestState.New,
-                responseId: null,
-                response: null,
-            })
-        })),
+            const requests_not_done = state.requests.filter((req: Request) => req.state === RequestState.New || req.state === RequestState.Processing);
+
+            if (requests_not_done.length >= global_overload_limit) {
+                state.state = BotState.Overloaded;
+                console.log(`overload at ${Date.now()}! Number of active requests: ${state.requests.length}`);
+            } else {
+                state.state = BotState.Idle;
+                state.requests = [
+                    ...requests_not_done,
+                    {
+                        id,
+                        chatId,
+                        text,
+                        format,
+                        state: RequestState.New,
+                        responseId: null,
+                        response: null,
+                    }
+                ];
+            }
+        })
+    ),
 
     processRequest: (id) => set(
         produce((state) => {
