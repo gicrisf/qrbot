@@ -1,0 +1,80 @@
+#+title: QR Code Telegram Bot
+
+A Telegram bot that generates QR codes.
+
+Users can send any text, and the bot will create a QR code in either PNG or SVG format.
+
+* Commands
+- =/start= - display the welcome message.
+- =/help= - show the help message with instructions.
+- =/settings= - configure the QR code format (PNG or SVG).
+
+* Installation
+Clone the repository:
+
+#+begin_src bash
+git clone https://github.com/gicrisf/qrbot.git
+cd qrbot
+#+end_src
+
+Install dependencies:
+
+#+begin_src bash
+npm install
+#+end_src
+
+Set up environment variables:
+- Create a =.env= file in the root directory.
+- Add your Telegram bot token:
+
+#+begin_src env
+TELEGRAM_TOKEN=your_telegram_bot_token
+#+end_src
+
+Run the bot:
+
+#+begin_src bash
+npm start
+#+end_src
+
+* Tests
+To run the tests for this bot, ensure you have [[https://bun.sh/][Bun]] installed. Once Bun is set up, simply execute the following command in your terminal:
+
+#+begin_src bash
+bun test
+#+end_src
+
+This will run all the test cases defined in the provided test suite, ensuring the bot's functionality is working as expected. No additional setup is required beyond having Bun installed.
+
+* Docker
+Build the Docker Image (in the root directory):
+
+#+begin_src bash
+docker build -t qrbot .
+#+end_src
+
+Run the Docker Container:
+
+#+begin_src bash
+docker run -d --name qrbot-container qrbot
+#+end_src
+
+Pass the token using the =-e= flag:
+
+#+begin_src bash
+docker run -d --name qrbot-container -e "TELEGRAM_TOKEN=your_token" qrbot
+#+end_src
+
+Your bot should now be running inside the Docker container. To monitor the bot's logs, use:
+
+#+begin_src bash
+docker logs -f qrbot-container
+#+end_src
+
+* License
+This project is licensed under the MIT License.
+
+* Acknowledgments
+- [[https://github.com/yagop/node-telegram-bot-api][node-telegram-bot-api]] for the Telegram bot library.
+- [[https://github.com/motdotla/dotenv][dotenv]] for environment variable management.
+- [[https://bun.sh/][Bun]] for making typescript development so pleasant.
