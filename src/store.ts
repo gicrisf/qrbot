@@ -4,8 +4,6 @@ import { createStore } from 'zustand/vanilla';
 import { produce } from 'immer';
 import QRCode from 'qrcode';
 
-const global_overload_limit = 5;
-
 export enum QrFormat {
     Png = "png",
     Svg = "svg",
@@ -13,10 +11,10 @@ export enum QrFormat {
 }
 
 export enum RequestState {
-    New = "New",
-    Processing = "Processing",
-    Completed = "Completed",
-    Error = "Error",
+    New = 0,
+    Processing = 1,
+    Completed = 2,
+    Error = 3,
 }
 
 export type Request = {
@@ -29,11 +27,11 @@ export type Request = {
 }
 
 export enum ChatMode {
-    Normal = "Normal",
-    Settings = "Settings",
+    Normal = 0,
+    Settings = 1,
 }
 
-type Chat = {
+export type Chat = {
     id: number;
     userId: number;
     format: QrFormat;
@@ -47,15 +45,18 @@ export enum BotState {
 
 interface State {
     filesDirectory: string;
+    overloadLimit: number;
     chats: Chat[];
     requests: Request[];
     state: BotState;
 }
 
 const initialState: State = {
-    filesDirectory: "generatedImages",
+    filesDirectory: "generated",
+    overloadLimit: 5,
     chats: [],
     requests: [],
+    state: BotState.Idle,
 }
 
 interface Action {
@@ -110,9 +111,9 @@ export const store = createStore<State & Action>((set, get) => ({
         produce((state) => {
             const requests_not_done = state.requests.filter((req: Request) => req.state === RequestState.New || req.state === RequestState.Processing);
 
-            if (requests_not_done.length >= global_overload_limit) {
+            if (requests_not_done.length >= state.overloadLimit) {
                 state.state = BotState.Overloaded;
-                console.log(`overload at ${Date.now()}! Number of active requests: ${state.requests.length}`);
+                console.log(`Overload reached at time ${Date.now()}!`);
             } else {
                 state.state = BotState.Idle;
                 state.requests = [
@@ -160,7 +161,7 @@ export const store = createStore<State & Action>((set, get) => ({
 
     genQr: ({ text, format }) => {
         const sanitizedFileName = text.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-        const outputDir = 'generatedImages';
+        const outputDir = 'generated';
         const outputFileName = join(outputDir, `${sanitizedFileName}_qr.${format}`);
 
         return exists(outputDir)

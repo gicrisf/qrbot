@@ -56,6 +56,6 @@ describe('Zustand Store', () => {
 
     it("should generate a QR code", async () => {
         const result = await store.getState().genQr({ text: "test", format: QrFormat.Png });
-        expect(result).toMatch(path.join("generatedImages", "test_qr.png"));
+        expect(result).toMatch(path.join("generated", "test_qr.png"));
     });
 });

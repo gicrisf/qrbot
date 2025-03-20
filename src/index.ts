@@ -1,7 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import { store, Request, RequestState, QrFormat, ChatMode } from './store.ts';
+import { store, Chat, Request, RequestState, QrFormat, ChatMode } from './store.ts';
 
 // Disable octet stream warning
 // https://github.com/yagop/node-telegram-bot-api/issues/838
@@ -51,7 +51,7 @@ Choose the QR code format:
 1. PNG (default)
 2. SVG
 
-Use /setPng for PNG or /setSvg for SVG.`;
+Use /set_png for PNG or /set_svg for SVG.`;
 
   bot.sendMessage(chatId, settingsMessage);
 
@@ -76,7 +76,6 @@ Use /setPng for PNG or /setSvg for SVG.`;
     }
 
     store.getState().setChatFormat(chatId, format);
-    console.log(store.getState());
 
     bot.sendMessage(chatId, `✅ QR code format set to ${format.toUpperCase()}.`);
     // Back to the normal mode
@@ -96,7 +95,6 @@ bot.on('message', (msg: TelegramBot.Message) => {
     // const userId = msg.from.id;
     store.getState().newChat(chatId);
     chat = store.getState().chats.find(chat => chat.id === chatId);
-    console.log("new chat!", chat);
   };
 
   if (chat && text) {
@@ -117,10 +115,18 @@ bot.on('message', (msg: TelegramBot.Message) => {
 
 const animateLoading = ({ messageId, requestId } : { messageId: number, requestId: number }) => {
   return new Promise((resolve) => {
-    const getRequest = () => store
-      .getState()
-      .requests
-      .find(req => req.id === requestId);
+    const getRequest = () => {
+      const request = store
+        .getState()
+        .requests
+        .find(req => req.id === requestId);
+
+      if (!request) {
+        throw new Error(`Request with ID ${requestId} not found`);
+      }
+
+      return request;
+    };
 
     const condition = () => getRequest().state === RequestState.Processing;
 
@@ -169,7 +175,6 @@ const handleNewRequests = (currentRequests: Request[], previousRequests: Request
   if (currentRequests.length > previousRequests.length) {
     const previousIds = previousRequests.map(item => item.id);
     const newElements = currentRequests.filter(item => !previousIds.includes(item.id));
-    console.log("new request!", newElements);
   }
 };
 
@@ -177,10 +182,10 @@ const handleStateChange = (currentRequest: Request, previousRequest: Request) =>
   if (previousRequest.state !== currentRequest.state) {
     switch (currentRequest.state) {
       case RequestState.New:
-        console.log("Request is now New:", currentRequest.id);
+        console.log(`New request ${currentRequest.id} from ${currentRequest.chatId}`);
         break;
       case RequestState.Processing:
-        console.log("Request is now Processing:", currentRequest.id);
+        console.log(`Request ${currentRequest.id} (from ${currentRequest.chatId}) is now Processing`);
         bot.sendMessage(
           currentRequest.chatId,
           `Bot is now Processing: ${currentRequest.text}`, {
@@ -194,14 +199,14 @@ const handleStateChange = (currentRequest: Request, previousRequest: Request) =>
           });
         break;
       case RequestState.Completed:
-        console.log("Request is now Completed:", currentRequest);
+        console.log(`Request ${currentRequest.id} (from ${currentRequest.chatId}) is now Completed`);
         handleCompletedRequest(currentRequest);
         break;
       case RequestState.Error:
-        console.log("Request is now in Error state:", currentRequest.id);
+        console.log(`Request from ${currentRequest.id} is now in Error state`);
         break;
       default:
-        console.log("Unknown state for request:", currentRequest.id);
+        console.error(`Unknown state for request: ${currentRequest.id}`);
         break;
     }
   }
@@ -209,6 +214,10 @@ const handleStateChange = (currentRequest: Request, previousRequest: Request) =>
 
 const handleCompletedRequest = (currentRequest: Request) => {
   const format = currentRequest.format;
+  if (!currentRequest.response) {
+    throw new Error('No local writing path provided');
+  };
+
   switch (format) {
     case QrFormat.Png:
       bot.sendPhoto(
@@ -219,8 +228,8 @@ const handleCompletedRequest = (currentRequest: Request) => {
           reply_to_message_id: currentRequest.id
         }
       )
-      .then(() => console.log('Photo sent!'))
-      .catch((err: Error) => console.error('Error sending photo:', err));
+      .then(() => console.log(`Photo sent to ${currentRequest.chatId}`))
+      .catch((err: Error) => console.error(`Error sending photo to ${currentRequest.chatId}. Error: ${err}`));
       break;
     case QrFormat.Svg:
       bot.sendDocument(
@@ -231,16 +240,16 @@ const handleCompletedRequest = (currentRequest: Request) => {
           reply_to_message_id: currentRequest.id
         }
       )
-      .then(() => console.log('SVG sent!'))
-      .catch((err: Error) => console.error('Error sending SVG:', err));
+      .then(() => console.log(`SVG sent to ${currentRequest.chatId}`))
+      .catch((err: Error) =>  console.error(`Error sending SVG to ${currentRequest.chatId}. Error: ${err}`));
       break;
     default:
-      console.log('Unsupported format:', format);
+      console.error(`Unsupported format: ${format}`);
       break;
   }
 };
 
-const handleChatChange = (currentChat: Chat) => {
+const handleChatChange = (currentChat: Chat, previousChat: Chat) => {
   const mode = currentChat.mode;
   switch (mode) {
     case ChatMode.Normal:
@@ -249,9 +258,6 @@ const handleChatChange = (currentChat: Chat) => {
         { command: '/help', description: 'Show help message' },
         { command: '/settings', description: 'Change settings' }
       ], { scope: { type: 'chat', chat_id: currentChat.id } })
-          .then(() => {
-            console.log('Settings commands are now available.');
-          })
           .catch((error) => {
             console.error('Error setting commands:', error);
           });
@@ -262,14 +268,14 @@ const handleChatChange = (currentChat: Chat) => {
         { command: '/set_svg', description: 'Set QR code format to SVG' }
       ], { scope: { type: 'chat', chat_id: currentChat.id } })
         .then(() => {
-          console.log('Settings commands are now available.');
+          console.log(`Settings commands are now available for ${currentChat.id}`);
         })
         .catch((error) => {
-          console.error('Error setting commands:', error);
+          console.error(`Error setting commands: ${error}`);
         });
       break;
     default:
-      console.log("not supported mode", currentChat.id);
+      console.log(`Unsupported mode in ${currentChat.id}`);
   }
 };
 
