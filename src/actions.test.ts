@@ -1,6 +1,7 @@
 import { describe, mock, beforeEach, afterAll, test, jest, expect, it } from "bun:test";
 import { store, QrFormat, RequestState, ChatMode } from './store';
 import { createStore } from 'zustand/vanilla';
+import path from 'path';
 
 describe('Zustand Store', () => {
     beforeEach(() => {
@@ -55,6 +56,6 @@ describe('Zustand Store', () => {
 
     it("should generate a QR code", async () => {
         const result = await store.getState().genQr({ text: "test", format: QrFormat.Png });
-        expect(result).toMatch("generatedImages\\test_qr.png");
+        expect(result).toMatch(path.join("generatedImages", "test_qr.png"));
     });
 });
